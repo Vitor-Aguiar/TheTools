@@ -75,7 +75,7 @@ def goenumaquatone(hosts):
 
 def urltofilename(url):
 
-	url_file_name = url.replace('https://','').replace('http://','').replace('/','-')
+	url_file_name = url.replace('https://','https--').replace('http://','http--').replace('/','-')
 
 	return url_file_name
 
