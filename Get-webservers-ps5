@@ -1,0 +1,87 @@
+$Ports = @(80, 443, 8000, 8008, 8080, 8081, 8443, 8888)
+$TimeoutMs = 5000
+$ThrottleLimit = 25
+
+$Computers = Get-ADComputer -Filter 'Enabled -eq $true' -Properties DNSHostName |
+    Where-Object { $_.DNSHostName } |
+    Select-Object -ExpandProperty DNSHostName
+
+$RunspacePool = [RunspaceFactory]::CreateRunspacePool(1, $ThrottleLimit)
+$RunspacePool.Open()
+
+$Jobs = @()
+
+foreach ($Computer in $Computers) {
+
+    $PowerShell = [PowerShell]::Create()
+    $PowerShell.RunspacePool = $RunspacePool
+
+    [void]$PowerShell.AddScript({
+
+        param(
+            $Computer,
+            $Ports,
+            $TimeoutMs
+        )
+
+        foreach ($Port in $Ports) {
+
+            $TcpClient = New-Object System.Net.Sockets.TcpClient
+
+            try {
+                $Connection = $TcpClient.BeginConnect(
+                    $Computer,
+                    $Port,
+                    $null,
+                    $null
+                )
+
+                if ($Connection.AsyncWaitHandle.WaitOne($TimeoutMs, $false)) {
+
+                    try {
+                        $TcpClient.EndConnect($Connection)
+
+                        if ($TcpClient.Connected) {
+
+                            [PSCustomObject]@{
+                                Computer = $Computer
+                                Port     = $Port
+                                Status   = "Open"
+                            }
+                        }
+                    }
+                    catch {}
+                }
+            }
+            catch {}
+
+            finally {
+                $TcpClient.Close()
+            }
+        }
+
+    }).AddArgument($Computer).AddArgument($Ports).AddArgument($TimeoutMs)
+
+    $Jobs += [PSCustomObject]@{
+        PowerShell = $PowerShell
+        Handle     = $PowerShell.BeginInvoke()
+    }
+}
+
+$Results = foreach ($Job in $Jobs) {
+
+    $Job.PowerShell.EndInvoke($Job.Handle)
+
+    $Job.PowerShell.Dispose()
+}
+
+$RunspacePool.Close()
+$RunspacePool.Dispose()
+
+$Results |
+    Sort-Object Computer, Port |
+    Format-Table -AutoSize
+
+$Results |
+    Sort-Object Computer, Port |
+    Export-Csv ".\AD-Web-Ports.csv" -NoTypeInformation
